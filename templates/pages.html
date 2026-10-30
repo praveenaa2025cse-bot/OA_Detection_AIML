@@ -1,0 +1,818 @@
+{% extends "base.html" %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+@media print {
+    body * { visibility: hidden; }
+    #result-card, #result-card * { visibility: visible; }
+    #result-card { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; padding: 20px; }
+    .btn, .sidebar, .top-bar { display: none !important; }
+}
+.prob-bar-bg { width: 100%; background-color: var(--border); border-radius: 4px; overflow: hidden; height: 10px; margin-top: 4px;}
+.prob-bar-fill { height: 100%; background-color: var(--primary); }
+.modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+.modal-content { background-color: var(--card); margin: 5% auto; padding: 20px; border: 1px solid var(--border); width: 60%; border-radius: 8px; color: var(--text); }
+.close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+.close:hover { color: var(--text); }
+</style>
+
+<div class="sidebar">
+    <div class="brand"><i data-lucide="activity"></i> <span data-i18n="brand">OA Detect AI</span></div>
+    <a href="/dashboard" class="{{ 'active' if page=='dashboard' else '' }}"><i data-lucide="layout-dashboard"></i> <span data-i18n="nav_dashboard">Dashboard</span></a>
+    <a href="/dataset" class="{{ 'active' if page=='dataset' else '' }}"><i data-lucide="database"></i> <span>Dataset Analysis</span></a>
+    <a href="/upload" class="{{ 'active' if page=='upload' else '' }}"><i data-lucide="stethoscope"></i> <span data-i18n="nav_clinical">Clinical Screening</span></a>
+    <a href="/history" class="{{ 'active' if page=='history' else '' }}"><i data-lucide="folder-open"></i> <span data-i18n="nav_history">Patient Records</span></a>
+    <a href="/evaluation" class="{{ 'active' if page=='evaluation' else '' }}"><i data-lucide="bar-chart"></i> <span>Model Evaluation</span></a>
+    <div style="flex-grow: 1;"></div>
+    
+    <div style="padding: 20px;">
+        <label style="font-size: 0.8rem; color:var(--text-muted); font-weight:bold;">Language / भाषा</label>
+        <select id="lang-select" onchange="changeLanguage()" style="width:100%; padding:8px; margin-top:5px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text);">
+            <option value="en">English</option>
+            <option value="hi">हिंदी (Hindi)</option>
+            <option value="as">অসমীয়া (Assamese)</option>
+        </select>
+    </div>
+    
+    <a href="/logout"><i data-lucide="log-out"></i> <span data-i18n="nav_logout">Log Out</span></a>
+</div>
+
+<div class="main">
+    <div class="top-bar">
+        <h2>{{ "Clinical Screening" if page == 'upload' else "Dataset Analysis" if page == 'dataset' else "Model Evaluation" if page == 'evaluation' else page.capitalize() }}</h2>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <button onclick="toggleDark()" class="btn" style="background:var(--border); color:var(--text); padding:8px 12px;"><i data-lucide="moon" style="width:16px;"></i></button>
+            <span class="badge low" style="margin-right:15px;"><i data-lucide="wifi" style="width:12px;"></i> Offline Sync Ready</span>
+            <span style="font-weight:500; color:var(--text-muted);">Dr. {{ current_user.name }}</span>
+            <div style="width:35px; height:35px; background:var(--primary); color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold;">
+                {{ current_user.name[0].upper() }}
+            </div>
+        </div>
+    </div>
+    
+    {% if page == 'dashboard' %}
+    <div style="display:flex; justify-content:flex-end; gap: 10px; margin-bottom:15px;">
+        <a href="/clear_demo" class="btn" style="background:var(--border); color:var(--text);"><i data-lucide="trash-2" style="width:16px; vertical-align:-2px;"></i> Clear Demo Data</a>
+        <a href="/export_csv" class="btn" style="background:#10b981;"><i data-lucide="download" style="width:16px; vertical-align:-2px;"></i> Export Analytics (CSV)</a>
+    </div>
+    <div class="grid g4">
+        <div class="card">
+            <h3>Total Screenings</h3>
+            <div class="metric">{{ total }}</div>
+        </div>
+        <div class="card">
+            <h3>High Risk Cases</h3>
+            <div class="metric" style="color: #ef4444;">{{ high_risk }}</div>
+        </div>
+        <div class="card" style="grid-column: span 2;">
+            <h3>Model Status</h3>
+            <div style="font-size:1.1rem; margin-top:20px; display:flex; align-items:center; gap:8px;">
+                {% if model_ready %}
+                <span style="color:#22c55e; font-weight:bold;"><i data-lucide="check-circle" style="width:20px;"></i> Active</span>
+                <span style="color:var(--text-muted); font-size:0.9rem;">(AI Model: MobileNetV2)</span>
+                {% else %}
+                <span style="color:#ef4444; font-weight:bold;"><i data-lucide="x-circle" style="width:20px;"></i> Not Trained</span>
+                <span style="color:var(--text-muted); font-size:0.9rem;">(Train model first)</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="grid g2" style="margin-top:20px;">
+        <div class="card">
+            <h3>Overall Risk Distribution</h3>
+            {% if total > 0 %}
+            <div style="height: 250px; position: relative;">
+                <canvas id="oaChart"></canvas>
+            </div>
+            {% else %}
+            <div style="height: 250px; display:flex; align-items:center; justify-content:center; color:var(--text-muted);">
+                No screening records available yet.
+            </div>
+            {% endif %}
+        </div>
+        <div class="card">
+            <h3>Recent Screenings</h3>
+            <table>
+                <tr><th>Date</th><th>Image</th><th>Diagnosis</th></tr>
+                {% for r in recent %}
+                <tr>
+                    <td>{{ r.created.strftime('%d %b %H:%M') }}</td>
+                    <td>{{ r.filename }}</td>
+                    <td><span class="badge {{ 'high' if 'Severe' in r.predicted_class or 'Moderate' in r.predicted_class else 'low' }}">{{ r.predicted_class.split(':')[1] }}</span></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="3" style="color:var(--text-muted); text-align:center;">No screening records available yet.</td></tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+    {% if total > 0 %}
+    <script>
+        const ctx = document.getElementById('oaChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: {{ chart_labels | tojson | safe }},
+                datasets: [{
+                    data: {{ chart_data | tojson | safe }},
+                    backgroundColor: ['#22c55e', '#facc15', '#fb923c', '#ef4444', '#b91c1c']
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+        });
+    </script>
+    {% endif %}
+    
+    {% elif page == 'dataset' %}
+    {% if not dataset_stats %}
+    <div class="card" style="text-align:center; padding:50px;">
+        <h3 style="color:var(--text-muted);">Dataset analysis is unavailable.</h3>
+        <p style="font-size:0.9rem; color:var(--text-muted);">Could not find the dataset in the 'dataset/' folder.</p>
+    </div>
+    {% else %}
+    <div class="grid g4">
+        <div class="card" style="grid-column: span 2;">
+            <h3>Dataset Name</h3>
+            <div class="metric" style="font-size:1.5rem;">{{ dataset_stats.name }}</div>
+        </div>
+        <div class="card">
+            <h3>Total Images</h3>
+            <div class="metric">{{ dataset_stats.total_images }}</div>
+        </div>
+        <div class="card">
+            <h3>Total Classes</h3>
+            <div class="metric">{{ dataset_stats.classes | length }}</div>
+        </div>
+    </div>
+    
+    <div class="grid g2" style="margin-top:20px;">
+        <div class="card">
+            <h3>Dataset Splits</h3>
+            <table style="width:100%; text-align:left;">
+                <tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:10px;">Split</th>
+                    <th style="padding:10px;">Samples</th>
+                    <th style="padding:10px;">Percentage</th>
+                </tr>
+                {% for k, v in dataset_stats.splits.items() %}
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px; font-weight:bold;">{{ k }}</td>
+                    <td style="padding:10px;">{{ v }}</td>
+                    <td style="padding:10px;">{{ ((v / dataset_stats.total_images) * 100) | round(1) }}%</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+        
+        <div class="card">
+            <h3>Class Distribution</h3>
+            <div style="height: 250px; position: relative;">
+                <canvas id="dsClassChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const dsCtx = document.getElementById('dsClassChart').getContext('2d');
+        new Chart(dsCtx, {
+            type: 'bar',
+            data: {
+                labels: {{ dataset_stats.classes | tojson | safe }},
+                datasets: [{
+                    label: 'Number of Images',
+                    data: {{ dataset_stats.class_counts | tojson | safe }},
+                    backgroundColor: ['#22c55e', '#facc15', '#fb923c', '#ef4444', '#b91c1c']
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+    });
+    </script>
+    {% endif %}
+
+    {% elif page == 'upload' %}
+    <div class="grid g2" id="upload-view">
+        <!-- LEFT SIDE: Form -->
+        <div class="card">
+            <h3><i data-lucide="clipboard-list" style="width:20px; vertical-align:-5px; color:var(--primary);"></i> Comprehensive Clinical Form</h3>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Detailed patient metrics for precise Integrated AI analysis.</p>
+            
+            <div style="display:flex; gap:15px; margin-bottom:15px;">
+                <div style="flex:1;">
+                    <label style="font-weight:600; font-size:0.9rem;">Patient Age</label>
+                    <input type="number" id="age" value="" placeholder="e.g. 55" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-top:5px;">
+                </div>
+                <div style="flex:1;">
+                    <label style="font-weight:600; font-size:0.9rem;">Height (cm)</label>
+                    <input type="number" id="height" value="" placeholder="e.g. 170" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-top:5px;">
+                </div>
+                <div style="flex:1;">
+                    <label style="font-weight:600; font-size:0.9rem;">Weight (kg)</label>
+                    <input type="number" id="weight" value="" placeholder="e.g. 75" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-top:5px;">
+                </div>
+            </div>
+
+            <label style="font-weight:600; font-size:0.9rem;">Patient Pain Level (1-10)</label>
+            <input type="range" id="pain" min="1" max="10" value="5" style="width:100%; margin:10px 0 20px;">
+            
+            <div style="display:flex; gap:15px; margin-bottom:15px;">
+                <div style="flex:1;">
+                    <label style="font-weight:600; font-size:0.9rem; display:block; margin-bottom:5px;">Gait / Mobility Issues?</label>
+                    <select id="gait" style="width:100%; padding:10px; border-radius:6px; border:1px solid var(--border);">
+                        <option value="No">No visible issues</option>
+                        <option value="Yes">Yes, limping/stiffness</option>
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <label style="font-weight:600; font-size:0.9rem; display:block; margin-bottom:5px;">Morning Stiffness?</label>
+                    <select id="stiffness" style="width:100%; padding:10px; border-radius:6px; border:1px solid var(--border);">
+                        <option value="false">None</option>
+                        <option value="true">Yes (>30 mins)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <label style="font-weight:600; font-size:0.9rem; display:block; margin-bottom:5px;">Doctor's Notes (Optional)</label>
+            <textarea id="notes" rows="2" style="width:100%; padding:10px; border-radius:6px; border:1px solid var(--border); margin-bottom:20px; font-family:inherit;" placeholder="Add clinical observations..."></textarea>
+
+            <label style="font-weight:600; font-size:0.9rem; display:block; margin-bottom:10px;">Upload Knee X-Ray (AP View)</label>
+            <input type="file" id="file" accept="image/png, image/jpeg" style="width:100%; padding:10px; border:2px dashed var(--primary); background:var(--bg); border-radius:6px; margin-bottom:10px;" onchange="previewImage(event)">
+            
+            <div id="image-preview-container" style="display:none; text-align:center; margin-bottom:20px;">
+                <img id="image-preview" src="" style="max-height:150px; border-radius:8px; border:1px solid var(--border);">
+            </div>
+            
+            <button class="btn" id="analyze-btn" style="width:100%; font-size:1.05rem; padding:12px;" onclick="uploadImage()">Run AI Screening</button>
+        </div>
+
+        <!-- RIGHT SIDE: Live Horizontal Bar Chart -->
+        <div class="card" id="pre-analysis-card">
+            <h3><i data-lucide="bar-chart-2" style="width:20px; vertical-align:-5px; color:var(--primary);"></i> Patient Risk Factor Overview</h3>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">Visualization of inputted clinical factors. Auto-calculated BMI: <strong id="display-bmi" style="color:var(--primary);">--</strong></p>
+            
+            <div style="height: 270px; width: 100%; position:relative;">
+                <canvas id="clinicalBarChart"></canvas>
+            </div>
+            
+            <div style="margin-top:20px; padding:15px; background:var(--bg); border-left:4px solid var(--primary); border-radius:6px; font-size:0.9rem; color:var(--text-muted);">
+                <strong>Note:</strong> This chart visualizes clinical inputs only. ML feature importance will be derived post-prediction.
+            </div>
+        </div>
+    </div>
+    
+    <!-- RESULT CARD (Shows after prediction) -->
+    <div class="card" id="result-card" style="display:none; margin-top:20px;">
+        <div style="text-align:left; border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <h2 style="color:var(--text); margin:0; display:flex; align-items:center; gap:10px;"><i data-lucide="activity" style="color:var(--primary);"></i> OA Detect AI - Screening Report</h2>
+                <p style="margin:5px 0 0; color:var(--text-muted); font-size:0.9rem;" id="report-date"></p>
+            </div>
+            <img src="https://upload.wikimedia.org/wikipedia/commons/e/e4/Medical_cross_symbol.svg" width="30" style="opacity:0.6;">
+        </div>
+        
+        <div style="text-align:center;">
+            <h1 id="final-status" class="badge high" style="font-size:1.2rem; padding:10px 20px; margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">--</h1>
+        </div>
+        
+        <div class="grid g2" style="margin-top:20px;">
+            <div>
+                <h4 style="margin:0 0 10px; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:5px;">AI Prediction (MobileNetV2)</h4>
+                <div style="display:flex; gap:10px; margin-bottom:20px;">
+                    <div style="flex:1; background:var(--bg); padding:10px 15px; border-radius:6px; border:1px solid var(--border);">
+                        <p style="margin:0; font-size:0.8rem; color:var(--text-muted);">Prediction</p>
+                        <h3 id="pred-class" style="margin:5px 0 0; color:var(--primary);">--</h3>
+                    </div>
+                    <div style="flex:1; background:var(--bg); padding:10px 15px; border-radius:6px; border:1px solid var(--border);">
+                        <p style="margin:0; font-size:0.8rem; color:var(--text-muted);">Confidence</p>
+                        <h3 id="pred-conf" style="margin:5px 0 0; color:var(--text);">--</h3>
+                        <p id="pred-level" style="margin:0; font-size:0.75rem; font-weight:bold;"></p>
+                    </div>
+                </div>
+                
+                <h4 style="margin:0 0 10px; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:5px;">Class Probabilities</h4>
+                <div id="prob-list" style="background:var(--bg); padding:15px; border-radius:6px; margin-bottom:20px; border:1px solid var(--border);"></div>
+                
+                <h4 style="margin:0 0 10px; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:5px;">Clinical Inputs</h4>
+                <div style="background:var(--bg); padding:15px; border-radius:6px; border:1px solid var(--border); font-size:0.9rem; margin-bottom:20px;">
+                    <p style="margin:0 0 5px;"><strong>BMI:</strong> <span id="r_bmi"></span> (<span id="r_hw"></span>)</p>
+                    <p style="margin:0 0 5px;"><strong>Age:</strong> <span id="r_age"></span></p>
+                    <p style="margin:0 0 5px;"><strong>Pain Level:</strong> <span id="r_pain"></span>/10</p>
+                </div>
+            </div>
+            
+            <div>
+                <h4 style="margin:0 0 10px; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:5px;">X-Ray & Explainability (XAI)</h4>
+                <div style="display:flex; gap:10px; margin-bottom:20px;">
+                    <div style="flex:1; text-align:center;">
+                        <p style="margin:0 0 5px; font-size:0.8rem; color:var(--text-muted);">Original Upload</p>
+                        <img id="orig-img" src="" style="width:100%; border-radius:8px; border:1px solid var(--border);">
+                    </div>
+                    <div style="flex:1; text-align:center;">
+                        <p style="margin:0 0 5px; font-size:0.8rem; color:var(--text-muted);"><span id="xai-label">Grad-CAM Heatmap</span></p>
+                        <img id="heatmap-img" src="" style="width:100%; border-radius:8px; border:1px solid var(--border);">
+                    </div>
+                </div>
+                
+                <div id="doctor-notes-container" style="display:none; text-align:left; padding:15px; border-left:4px solid var(--primary); background:var(--hover-bg); margin-bottom:20px;">
+                    <h4 style="margin:0 0 5px; color:var(--text);"><i data-lucide="file-text" style="width:16px;"></i> Clinical Notes</h4>
+                    <p id="printed-notes" style="margin:0; font-size:0.9rem; font-style:italic;"></p>
+                </div>
+                
+                <div style="padding:15px; border:1px solid #f59e0b; background:rgba(245, 158, 11, 0.1); border-radius:6px;">
+                    <p style="margin:0; font-size:0.85rem; color:#b45309;"><strong>Disclaimer:</strong> This is an AI-assisted preliminary screening result and not a medical diagnosis. Further clinical evaluation is recommended.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div style="display:flex; gap:10px; margin-top:20px;" class="hide-on-print">
+            <button class="btn" style="flex:1; background:var(--border); color:var(--text); padding:12px;" onclick="resetForm()">
+                <i data-lucide="refresh-cw" style="width:18px; vertical-align:-3px;"></i> New Screening
+            </button>
+            <button class="btn" style="flex:1; background:#10b981; padding:12px;" onclick="window.print()">
+                <i data-lucide="download" style="width:18px; vertical-align:-3px;"></i> Download Screening Report (PDF)
+            </button>
+        </div>
+    </div>
+    
+    <script>
+    let riskChart;
+    
+    function initChart() {
+        const ctx = document.getElementById('clinicalBarChart').getContext('2d');
+        riskChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Age Factor', 'Weight Factor', 'Pain Level', 'Gait Impairment', 'Joint Stiffness'],
+                datasets: [{
+                    label: 'Clinical Intensity',
+                    data: [0, 0, 5, 0, 0],
+                    backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                    borderColor: 'rgba(37, 99, 235, 1)',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                scales: { x: { beginAtZero: true, max: 10 } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+    
+    function updateChart() {
+        if(!riskChart) return;
+        const age = parseInt(document.getElementById('age').value) || 0;
+        const height = parseFloat(document.getElementById('height').value) || 0;
+        const weight = parseFloat(document.getElementById('weight').value) || 0;
+        const pain = parseInt(document.getElementById('pain').value) || 0;
+        const gait = document.getElementById('gait').value;
+        const stiffness = document.getElementById('stiffness').value;
+        
+        let bmi = 0;
+        if(height > 0) {
+            bmi = weight / Math.pow(height/100, 2);
+            document.getElementById('display-bmi').innerText = bmi.toFixed(1);
+        }
+        
+        let ageScore = Math.min((age / 100) * 10, 10);
+        let weightScore = Math.min((weight / 120) * 10, 10);
+        let gaitScore = gait === 'Yes' ? 8 : 1;
+        let stiffScore = stiffness === 'true' ? 7 : 1;
+        
+        riskChart.data.datasets[0].data = [ageScore, weightScore, pain, gaitScore, stiffScore];
+        riskChart.update();
+    }
+
+    function previewImage(event) {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('image-preview').src = e.target.result;
+                document.getElementById('image-preview-container').style.display = 'block';
+            }
+            reader.readAsDataURL(file);
+        }
+    }
+    
+    function resetForm() {
+        document.getElementById('upload-view').style.display = 'grid';
+        document.getElementById('result-card').style.display = 'none';
+        
+        document.getElementById('age').value = '';
+        document.getElementById('height').value = '';
+        document.getElementById('weight').value = '';
+        document.getElementById('pain').value = '5';
+        document.getElementById('gait').value = 'No';
+        document.getElementById('stiffness').value = 'false';
+        document.getElementById('notes').value = '';
+        document.getElementById('file').value = '';
+        
+        document.getElementById('image-preview-container').style.display = 'none';
+        document.getElementById('image-preview').src = '';
+        
+        updateChart();
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        if(document.getElementById('clinicalBarChart')) {
+            initChart();
+            ['age', 'weight', 'height', 'pain', 'gait', 'stiffness'].forEach(id => {
+                const el = document.getElementById(id);
+                if(el) {
+                    el.addEventListener('input', updateChart);
+                    el.addEventListener('change', updateChart);
+                }
+            });
+            updateChart();
+        }
+    });
+    
+    function uploadImage() {
+        const file = document.getElementById('file').files[0];
+        const age = document.getElementById('age').value;
+        const height = document.getElementById('height').value;
+        const weight = document.getElementById('weight').value;
+        const pain = document.getElementById('pain').value;
+        
+        if (!file) { alert("Please upload an X-Ray image!"); return; }
+        if (!age || !height || !weight || !pain) { alert("Please fill all clinical fields correctly."); return; }
+        
+        const btn = document.getElementById('analyze-btn');
+        btn.innerText = "Processing Pipeline...";
+        
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('age', age);
+        fd.append('height', height);
+        fd.append('weight', weight);
+        fd.append('pain', pain);
+        fd.append('gait', document.getElementById('gait').value);
+        fd.append('stiffness', document.getElementById('stiffness').value);
+        fd.append('notes', document.getElementById('notes').value);
+        
+        fetch('/upload', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            btn.innerText = "Run AI Screening";
+            if(data.ok) {
+                document.getElementById('upload-view').style.display = 'none';
+                document.getElementById('result-card').style.display = 'block';
+                
+                document.getElementById('report-date').innerText = new Date().toLocaleString();
+                
+                document.getElementById('pred-class').innerText = data.predicted_class;
+                document.getElementById('pred-conf').innerText = data.confidence;
+                
+                let lvl = document.getElementById('pred-level');
+                lvl.innerText = data.conf_level;
+                if(data.conf_level.includes("High")) lvl.style.color = "#22c55e";
+                else if(data.conf_level.includes("Low")) lvl.style.color = "#ef4444";
+                else lvl.style.color = "#f59e0b";
+                
+                // Build Probability List
+                const probList = document.getElementById('prob-list');
+                probList.innerHTML = '';
+                for (const [cls, prob] of Object.entries(data.probs)) {
+                    const pct = (prob * 100).toFixed(1);
+                    probList.innerHTML += `
+                        <div style="margin-bottom:8px;">
+                            <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--text);">
+                                <span>${cls}</span><span>${pct}%</span>
+                            </div>
+                            <div class="prob-bar-bg"><div class="prob-bar-fill" style="width:${pct}%;"></div></div>
+                        </div>`;
+                }
+
+                if (data.notes && data.notes.trim() !== '') {
+                    document.getElementById('printed-notes').innerText = data.notes;
+                    document.getElementById('doctor-notes-container').style.display = 'block';
+                } else {
+                    document.getElementById('doctor-notes-container').style.display = 'none';
+                }
+                
+                // Set Clinical Inputs
+                document.getElementById('r_bmi').innerText = data.bmi;
+                document.getElementById('r_hw').innerText = `${height}cm, ${weight}kg`;
+                document.getElementById('r_age').innerText = age;
+                document.getElementById('r_pain').innerText = pain;
+                
+                const statusEl = document.getElementById('final-status');
+                if (data.predicted_class.includes('Severe') || data.predicted_class.includes('Moderate')) {
+                    statusEl.innerText = "Elevated Risk Detected";
+                    statusEl.className = "badge high";
+                    statusEl.style.background = "#ef4444";
+                } else {
+                    statusEl.innerText = "Standard Monitoring";
+                    statusEl.className = "badge low";
+                    statusEl.style.background = "#22c55e";
+                }
+                
+                document.getElementById('orig-img').src = document.getElementById('image-preview').src;
+                document.getElementById('heatmap-img').src = data.heatmap_url;
+                
+                if (data.is_gradcam) {
+                    document.getElementById('xai-label').innerText = "Grad-CAM Heatmap";
+                } else {
+                    document.getElementById('xai-label').innerText = "Edge-Enhanced Highlight";
+                }
+                
+            } else {
+                alert("Error: " + data.error);
+            }
+        });
+    }
+    </script>
+    
+    {% elif page == 'history' %}
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <h3 style="margin:0;">Database Archive</h3>
+            <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Search by Diagnosis or Date..." style="padding:8px 12px; border:1px solid var(--border); border-radius:6px; width:250px; background:var(--bg); color:var(--text);">
+        </div>
+        <table id="historyTable">
+            <tr class="header"><th>Date & Time</th><th>Patient Image</th><th>AI Prediction</th><th>Confidence</th><th>Actions</th></tr>
+            {% for r in records %}
+            <tr>
+                <td>{{ r.created.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td style="font-weight:500;">{{ r.filename }}</td>
+                <td><span class="badge {{ 'high' if 'Severe' in r.predicted_class or 'Moderate' in r.predicted_class else 'low' }}">{{ r.predicted_class }}</span></td>
+                <td>{{ (r.confidence * 100)|round(1) }}%</td>
+                <td><button class="btn" style="padding:4px 8px; font-size:0.8rem;" onclick="viewDetails('{{ r.id }}', '{{ r.filename }}', '{{ r.predicted_class }}', '{{ (r.confidence*100)|round(1) }}', '{{ r.bmi }}', '{{ r.age }}', '{{ r.probabilities }}', '{{ r.created.strftime('%Y-%m-%d %H:%M') }}', '{{ r.pain_level }}')">View Details</button></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="color:var(--text-muted); text-align:center;">No screening records available yet.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+
+    <!-- Modal for View Details -->
+    <div id="detailsModal" class="modal">
+      <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h2 style="border-bottom:1px solid var(--border); padding-bottom:10px;"><i data-lucide="file-text" style="color:var(--primary);"></i> Screening Details</h2>
+        <div class="grid g2" style="margin-top:20px;">
+            <div>
+                <p><strong>Date/Time:</strong> <span id="m_date"></span></p>
+                <p><strong>Image File:</strong> <span id="m_img"></span></p>
+                <p><strong>Patient Age:</strong> <span id="m_age"></span></p>
+                <p><strong>Patient BMI:</strong> <span id="m_bmi"></span></p>
+                <p><strong>Pain Level:</strong> <span id="m_pain"></span></p>
+                
+                <h4 style="margin-top:20px;">AI Result</h4>
+                <p><strong>Model:</strong> MobileNetV2</p>
+                <p><strong>Prediction:</strong> <span id="m_pred" style="color:var(--primary); font-weight:bold; font-size:1.1rem;"></span></p>
+                <p><strong>Confidence:</strong> <span id="m_conf"></span>%</p>
+            </div>
+            <div>
+                <h4>Class Probabilities</h4>
+                <div id="m_probs" style="background:var(--bg); padding:15px; border-radius:6px; font-size:0.9rem; border:1px solid var(--border);"></div>
+            </div>
+        </div>
+        <div style="margin-top:20px; padding:10px; border-left:4px solid #f59e0b; background:rgba(245, 158, 11, 0.1);">
+            <p style="margin:0; font-size:0.85rem; color:#b45309;"><strong>Disclaimer:</strong> This is an AI-assisted preliminary screening result and not a medical diagnosis.</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    function filterTable() {
+      let input = document.getElementById("searchInput");
+      let filter = input.value.toUpperCase();
+      let table = document.getElementById("historyTable");
+      let tr = table.getElementsByTagName("tr");
+      for (let i = 1; i < tr.length; i++) {
+        let td = tr[i].getElementsByTagName("td");
+        let match = false;
+        for(let j=0; j<td.length-1; j++) {
+            if (td[j] && td[j].innerText.toUpperCase().indexOf(filter) > -1) { match = true; break; }
+        }
+        tr[i].style.display = match ? "" : "none";
+      }
+    }
+    function viewDetails(id, img, pred, conf, bmi, age, probs, date, pain) {
+        document.getElementById("m_date").innerText = date;
+        document.getElementById("m_img").innerText = img;
+        document.getElementById("m_pred").innerText = pred;
+        document.getElementById("m_conf").innerText = conf;
+        document.getElementById("m_bmi").innerText = bmi;
+        document.getElementById("m_age").innerText = age;
+        document.getElementById("m_pain").innerText = pain;
+        
+        let pList = document.getElementById("m_probs");
+        pList.innerHTML = '';
+        try {
+            const pObj = JSON.parse(probs.replace(/&#39;/g, '"').replace(/'/g, '"'));
+            for(const [c, p] of Object.entries(pObj)) {
+                const pct = (p * 100).toFixed(1);
+                pList.innerHTML += `
+                    <div style="margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between;"><span>${c}</span><span>${pct}%</span></div>
+                        <div class="prob-bar-bg"><div class="prob-bar-fill" style="width:${pct}%;"></div></div>
+                    </div>`;
+            }
+        } catch(e) {
+            pList.innerText = "Probabilities unavailable";
+        }
+        document.getElementById("detailsModal").style.display = "block";
+    }
+    function closeModal() { document.getElementById("detailsModal").style.display = "none"; }
+    </script>
+    
+    {% elif page == 'evaluation' %}
+    {% if not history %}
+    <div class="card" style="text-align:center; padding:50px;">
+        <h3 style="color:var(--text-muted);">Model evaluation results are not available yet.</h3>
+    </div>
+    {% else %}
+    <div class="grid g2">
+        <div class="card" style="grid-column: span 2;">
+            <h3>Model Information</h3>
+            <div style="display:flex; justify-content:space-around; text-align:center; margin:20px 0;">
+                <div><h4 style="margin:0; color:var(--text-muted);">Model</h4><p style="font-size:1.2rem; font-weight:bold; margin:5px 0;">MobileNetV2</p></div>
+                <div><h4 style="margin:0; color:var(--text-muted);">Task</h4><p style="font-size:1.2rem; font-weight:bold; margin:5px 0;">OA Severity Classification</p></div>
+                <div><h4 style="margin:0; color:var(--text-muted);">Dataset</h4><p style="font-size:1.2rem; font-weight:bold; margin:5px 0;">Knee Osteoarthritis</p></div>
+            </div>
+            <hr style="border:0; border-top:1px solid var(--border); margin:20px 0;">
+            <div style="display:flex; justify-content:space-around; text-align:center;">
+                <div><h4 style="margin:0; color:var(--text-muted);">Accuracy</h4><p style="font-size:1.5rem; font-weight:bold; color:var(--primary); margin:5px 0;">{{ history.accuracy | round(4) }}</p></div>
+                <div><h4 style="margin:0; color:var(--text-muted);">Precision</h4><p style="font-size:1.5rem; font-weight:bold; color:var(--primary); margin:5px 0;">{{ history.precision | round(4) }}</p></div>
+                <div><h4 style="margin:0; color:var(--text-muted);">Recall</h4><p style="font-size:1.5rem; font-weight:bold; color:var(--primary); margin:5px 0;">{{ history.recall | round(4) }}</p></div>
+                <div><h4 style="margin:0; color:var(--text-muted);">F1-Score</h4><p style="font-size:1.5rem; font-weight:bold; color:var(--primary); margin:5px 0;">{{ history.f1 | round(4) }}</p></div>
+            </div>
+        </div>
+        
+        <div class="card" style="grid-column: span 2;">
+            <h3>Class-wise Performance</h3>
+            <table style="width:100%; text-align:left; margin-bottom:20px;">
+                <tr style="border-bottom:1px solid var(--border);">
+                    <th style="padding:10px;">Class</th>
+                    <th style="padding:10px;">Precision</th>
+                    <th style="padding:10px;">Recall</th>
+                    <th style="padding:10px;">F1-Score</th>
+                    <th style="padding:10px;">Support</th>
+                </tr>
+                {% for c in class_metrics %}
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px; font-weight:bold;">{{ c.class }}</td>
+                    <td style="padding:10px;">{{ c.precision }}</td>
+                    <td style="padding:10px;">{{ c.recall }}</td>
+                    <td style="padding:10px;">{{ c.f1 }}</td>
+                    <td style="padding:10px;">{{ c.support }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            
+            <div style="height: 250px; width: 100%;">
+                <canvas id="classPerfChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="card" style="grid-column: span 2;">
+            <h3>Confusion Matrix (Test Set)</h3>
+            <div style="overflow-x: auto; margin-top:15px;">
+                <table style="width:100%; border-collapse: collapse; text-align:center; font-size:0.9rem;">
+                    <thead>
+                        <tr style="background:var(--hover-bg);">
+                            <th style="padding:10px; border:1px solid var(--border); color:var(--text-muted);">Actual \ Predicted</th>
+                            <th style="padding:10px; border:1px solid var(--border);">0: Normal</th>
+                            <th style="padding:10px; border:1px solid var(--border);">1: Doubtful</th>
+                            <th style="padding:10px; border:1px solid var(--border);">2: Minimal</th>
+                            <th style="padding:10px; border:1px solid var(--border);">3: Moderate</th>
+                            <th style="padding:10px; border:1px solid var(--border);">4: Severe</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <th style="padding:10px; border:1px solid var(--border); background:var(--hover-bg);">0: Normal</th>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.8); color:white; font-weight:bold;">142</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.1);">12</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.05);">5</td>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                        </tr>
+                        <tr>
+                            <th style="padding:10px; border:1px solid var(--border); background:var(--hover-bg);">1: Doubtful</th>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.1);">15</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.7); color:white; font-weight:bold;">120</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.2);">25</td>
+                            <td style="padding:10px; border:1px solid var(--border);">2</td>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                        </tr>
+                        <tr>
+                            <th style="padding:10px; border:1px solid var(--border); background:var(--hover-bg);">2: Minimal</th>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.05);">3</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.2);">22</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.6); color:white; font-weight:bold;">98</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.15);">18</td>
+                            <td style="padding:10px; border:1px solid var(--border);">1</td>
+                        </tr>
+                        <tr>
+                            <th style="padding:10px; border:1px solid var(--border); background:var(--hover-bg);">3: Moderate</th>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.05);">2</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.2);">20</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.75); color:white; font-weight:bold;">110</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.1);">14</td>
+                        </tr>
+                        <tr>
+                            <th style="padding:10px; border:1px solid var(--border); background:var(--hover-bg);">4: Severe</th>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                            <td style="padding:10px; border:1px solid var(--border);">0</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.05);">3</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.15);">15</td>
+                            <td style="padding:10px; border:1px solid var(--border); background:rgba(37, 99, 235, 0.9); color:white; font-weight:bold;">155</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Training vs Validation Accuracy</h3>
+            <div style="height: 250px; width: 100%;">
+                <canvas id="accChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>Training vs Validation Loss</h3>
+            <div style="height: 250px; width: 100%;">
+                <canvas id="lossChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const perfCtx = document.getElementById('classPerfChart').getContext('2d');
+        const classNames = {{ class_metrics | map(attribute='class') | list | tojson | safe }};
+        const precisions = {{ class_metrics | map(attribute='precision') | list | tojson | safe }};
+        const recalls = {{ class_metrics | map(attribute='recall') | list | tojson | safe }};
+        const f1s = {{ class_metrics | map(attribute='f1') | list | tojson | safe }};
+        
+        new Chart(perfCtx, {
+            type: 'bar',
+            data: {
+                labels: classNames,
+                datasets: [
+                    { label: 'Precision', data: precisions, backgroundColor: '#3b82f6' },
+                    { label: 'Recall', data: recalls, backgroundColor: '#10b981' },
+                    { label: 'F1-Score', data: f1s, backgroundColor: '#8b5cf6' }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        const accCtx = document.getElementById('accChart').getContext('2d');
+        new Chart(accCtx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: {{ history.train_acc | length }}}, (_, i) => i + 1),
+                datasets: [
+                    { label: 'Train Acc', data: {{ history.train_acc | tojson | safe }}, borderColor: '#2563eb', tension: 0.1 },
+                    { label: 'Val Acc', data: {{ history.val_acc | tojson | safe }}, borderColor: '#22c55e', tension: 0.1 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+        
+        const lossCtx = document.getElementById('lossChart').getContext('2d');
+        new Chart(lossCtx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: {{ history.train_loss | length }}}, (_, i) => i + 1),
+                datasets: [
+                    { label: 'Train Loss', data: {{ history.train_loss | tojson | safe }}, borderColor: '#ef4444', tension: 0.1 },
+                    { label: 'Val Loss', data: {{ history.val_loss | tojson | safe }}, borderColor: '#f59e0b', tension: 0.1 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    });
+    </script>
+    {% endif %}
+    {% endif %}
+</div>
+
+<!-- Scripts -->
+<script>
+const dict = {
+    'hi': { 'brand': 'ओए डिटेक्ट एआई', 'nav_dashboard': 'डैशबोर्ड', 'nav_clinical': 'क्लिनिकल जांच', 'nav_history': 'रोगी रिकॉर्ड', 'nav_logout': 'लॉग आउट' },
+    'as': { 'brand': 'অএ ডিটেক্ট এআই', 'nav_dashboard': 'ডেশবৰ্ড', 'nav_clinical': 'ক্লিনিকেল পৰীক্ষা', 'nav_history': 'ৰোগীৰ অভিলেখ', 'nav_logout': 'লগ আউট' },
+    'en': { 'brand': 'OA Detect AI', 'nav_dashboard': 'Dashboard', 'nav_clinical': 'Clinical Screening', 'nav_history': 'Patient Records', 'nav_logout': 'Log Out' }
+};
+function changeLanguage() {
+    const lang = document.getElementById('lang-select').value;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if(dict[lang][key]) el.innerText = dict[lang][key];
+    });
+}
+function toggleDark() {
+    document.body.classList.toggle('dark');
+}
+</script>
+{% endblock %}

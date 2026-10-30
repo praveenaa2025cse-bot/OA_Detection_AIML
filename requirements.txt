@@ -1,0 +1,11 @@
+tensorflow
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+pillow
+Flask
+Flask-SQLAlchemy
+Flask-Login
+Werkzeug

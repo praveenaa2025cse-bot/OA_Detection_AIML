@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# Keep medical images and generated/user data out of Git.
+dataset/
+uploads/
+static/uploads/
+instance/*.db
+models/*.keras
+models/*.h5
+results/*
